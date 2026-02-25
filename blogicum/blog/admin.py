@@ -1,10 +1,11 @@
 from django.contrib import admin
 
-from .models import Post, Category, Location
+from .models import Category, Comment, Location, Post
 
 admin.site.empty_value_display = 'Не задано'
 
 
+@admin.register(Post)
 class PostAdmin(admin.ModelAdmin):
     list_display = (
         'short_title',
@@ -24,8 +25,8 @@ class PostAdmin(admin.ModelAdmin):
     search_fields = ('title',)
     list_filter = ('category', 'author')
 
-    def short_title(self, obj):
-        return obj.title[:30]
+    def short_title(self, object):
+        return object.title[:30]
     short_title.short_description = 'Заголовок'
 
 
@@ -34,6 +35,7 @@ class PostInline(admin.TabularInline):
     extra = 0
 
 
+@admin.register(Category)
 class CategoryAdmin(admin.ModelAdmin):
     inlines = (
         PostInline,
@@ -48,11 +50,12 @@ class CategoryAdmin(admin.ModelAdmin):
         'is_published',
     )
 
-    def short_title(self, obj):
-        return obj.title[:30]
+    def short_title(self, object):
+        return object.title[:30]
     short_title.short_description = 'Заголовок'
 
 
+@admin.register(Location)
 class LocationAdmin(admin.ModelAdmin):
     inlines = (
         PostInline,
@@ -65,11 +68,21 @@ class LocationAdmin(admin.ModelAdmin):
         'is_published',
     )
 
-    def short_name(self, obj):
-        return obj.name[:30]
+    def short_name(self, object):
+        return object.name[:30]
     short_name.short_description = 'Название места'
 
 
-admin.site.register(Post, PostAdmin)
-admin.site.register(Category, CategoryAdmin)
-admin.site.register(Location, LocationAdmin)
+@admin.register(Comment)
+class CommentAdmin(admin.ModelAdmin):
+    list_display = (
+        'short_name',
+        'post',
+        'author',
+        'created_at',
+    )
+    list_filter = ('post', 'author')
+
+    def short_name(self, object):
+        return object.name[:100]
+    short_name.short_description = 'Текст комментария'
