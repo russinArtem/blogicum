@@ -17,30 +17,35 @@ from .models import Category, Comment, Post, User
 POSTS_PER_PAGE = 10
 
 
-def add_comment_count_annotation(queryset):
-    return queryset.annotate(
-        comment_count=Count('comments')
-    ).order_by('-pub_date')
+def process_published_posts(
+    posts=Post.objects.all(),
+    is_filtering=True,
+    is_prefetching=True,
+    is_annotate_comments=True
+):
+    if is_filtering:
+        posts = posts.filter(
+            pub_date__lte=timezone.now(),
+            is_published=True,
+            category__is_published=True
+        )
+    if is_prefetching:
+        posts = posts.select_related('author', 'category', 'location')
+    if is_annotate_comments:
+        posts = posts.annotate(comment_count=Count('comments')).order_by(
+            *posts.model._meta.ordering
+        )
+    return posts
 
 
-def filter_published_posts(posts=None):
-    if posts is None:
-        posts = Post.objects.all()
-    return posts.select_related('author', 'category', 'location').filter(
-        pub_date__lte=timezone.now(),
-        is_published=True,
-        category__is_published=True
-    )
-
-
-def paginate_posts(posts, request):
-    return Paginator(posts, POSTS_PER_PAGE).get_page(request.GET.get('page'))
+def paginate_posts(posts, request, posts_per_page=POSTS_PER_PAGE):
+    return Paginator(posts, posts_per_page).get_page(request.GET.get('page'))
 
 
 class IndexListView(ListView):
     model = Post
     template_name = 'blog/index.html'
-    queryset = add_comment_count_annotation(filter_published_posts())
+    queryset = process_published_posts()
     paginate_by = POSTS_PER_PAGE
 
 
@@ -73,11 +78,15 @@ class PostDetailView(PostMixin, DetailView):
 
     def get_object(self):
         object = super().get_object()
-        if not (
-            filter_published_posts(Post.objects.filter(pk=object.pk)).exists()
-        ) and object.author != self.request.user:
-            raise Http404("Пост не найден")
-        return object
+        if object.author == self.request.user:
+            return object
+        else:
+            try:
+                return process_published_posts(is_annotate_comments=False).get(
+                    pk=object.pk
+                )
+            except Post.DoesNotExist:
+                raise Http404("Пост не найден")
 
     def get_context_data(self, **kwargs):
         return super().get_context_data(
@@ -95,7 +104,7 @@ class PostDeleteView(OnlyAuthorMixin, PostMixin, DeleteView):
     template_name = 'blog/post_form.html'
 
     def get_success_url(self):
-        return reverse('blog:profile', args=[self.object.author])
+        return reverse('blog:profile', args=[self.request.user.username])
 
 
 class CategoryPostsListView(ListView):
@@ -111,9 +120,7 @@ class CategoryPostsListView(ListView):
         )
 
     def get_queryset(self):
-        return add_comment_count_annotation(
-            filter_published_posts(self.get_category().posts)
-        )
+        return process_published_posts(posts=self.get_category().posts)
 
     def get_context_data(self, **kwargs):
         return super().get_context_data(**kwargs, category=self.get_category())
@@ -127,7 +134,7 @@ def add_comment(request, post_id):
         comment.author = request.user
         comment.post = get_object_or_404(Post, pk=post_id)
         comment.save()
-    return redirect('blog:post_detail', post_id=post_id)
+    return redirect('blog:post_detail', post_id)
 
 
 class CommentMixin:
@@ -135,7 +142,7 @@ class CommentMixin:
     pk_url_kwarg = 'comment_id'
 
     def get_success_url(self):
-        return reverse('blog:post_detail', args=[self.kwargs['comment_id']])
+        return reverse('blog:post_detail', args=[self.kwargs['post_id']])
 
 
 class CommentUpdateView(OnlyAuthorMixin, CommentMixin, UpdateView):
@@ -156,21 +163,25 @@ class UserDetailView(UserMixin, DetailView):
     template_name = 'blog/user_detail.html'
 
     def get_context_data(self, **kwargs):
+        if self.request.user == self.object:
+            posts = process_published_posts(
+                posts=self.object.posts.all(),
+                is_filtering=False
+            )
+        else:
+            posts = process_published_posts(posts=self.object.posts.all())
         return super().get_context_data(
             **kwargs,
-            page_obj=paginate_posts(
-                add_comment_count_annotation(self.object.posts.all()),
-                self.request
-            )
+            page_obj=paginate_posts(posts, self.request)
         )
 
 
-class UserUpdateView(UserPassesTestMixin, UserMixin, UpdateView):
+class UserUpdateView(LoginRequiredMixin, UserMixin, UpdateView):
     form_class = UserForm
     template_name = 'blog/user_form.html'
 
-    def test_func(self):
-        return self.get_object() == self.request.user
+    def get_object(self):
+        return self.request.user
 
     def get_success_url(self):
-        return reverse('blog:profile', args=[self.kwargs['username']])
+        return reverse('blog:profile', args=[self.request.user.username])
