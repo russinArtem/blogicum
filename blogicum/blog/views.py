@@ -2,7 +2,6 @@ from django.contrib.auth.decorators import login_required
 from django.contrib.auth.mixins import LoginRequiredMixin, UserPassesTestMixin
 from django.core.paginator import Paginator
 from django.db.models import Count
-from django.http import Http404
 from django.shortcuts import get_object_or_404, redirect
 from django.urls import reverse
 from django.utils import timezone
@@ -17,23 +16,23 @@ from .models import Category, Comment, Post, User
 POSTS_PER_PAGE = 10
 
 
-def process_published_posts(
+def process_posts(
     posts=Post.objects.all(),
-    is_filtering=True,
-    is_prefetching=True,
-    is_annotate_comments=True
+    do_filtering=True,
+    do_prefetching=True,
+    do_annotate_comments=True
 ):
-    if is_filtering:
+    if do_filtering:
         posts = posts.filter(
             pub_date__lte=timezone.now(),
             is_published=True,
             category__is_published=True
         )
-    if is_prefetching:
+    if do_prefetching:
         posts = posts.select_related('author', 'category', 'location')
-    if is_annotate_comments:
+    if do_annotate_comments:
         posts = posts.annotate(comment_count=Count('comments')).order_by(
-            *posts.model._meta.ordering
+            *Post._meta.ordering
         )
     return posts
 
@@ -45,7 +44,7 @@ def paginate_posts(posts, request, posts_per_page=POSTS_PER_PAGE):
 class IndexListView(ListView):
     model = Post
     template_name = 'blog/index.html'
-    queryset = process_published_posts()
+    queryset = process_posts()
     paginate_by = POSTS_PER_PAGE
 
 
@@ -80,13 +79,10 @@ class PostDetailView(PostMixin, DetailView):
         object = super().get_object()
         if object.author == self.request.user:
             return object
-        else:
-            try:
-                return process_published_posts(is_annotate_comments=False).get(
-                    pk=object.pk
-                )
-            except Post.DoesNotExist:
-                raise Http404("Пост не найден")
+        return super().get_object(process_posts(
+            do_prefetching=False,
+            do_annotate_comments=False
+        ))
 
     def get_context_data(self, **kwargs):
         return super().get_context_data(
@@ -120,7 +116,7 @@ class CategoryPostsListView(ListView):
         )
 
     def get_queryset(self):
-        return process_published_posts(posts=self.get_category().posts)
+        return process_posts(posts=self.get_category().posts)
 
     def get_context_data(self, **kwargs):
         return super().get_context_data(**kwargs, category=self.get_category())
@@ -153,30 +149,24 @@ class CommentDeleteView(OnlyAuthorMixin, CommentMixin, DeleteView):
     template_name = 'blog/comment_form.html'
 
 
-class UserMixin:
+class UserDetailView(DetailView):
     model = User
     slug_url_kwarg = 'username'
     slug_field = 'username'
-
-
-class UserDetailView(UserMixin, DetailView):
     template_name = 'blog/user_detail.html'
 
     def get_context_data(self, **kwargs):
-        if self.request.user == self.object:
-            posts = process_published_posts(
-                posts=self.object.posts.all(),
-                is_filtering=False
-            )
-        else:
-            posts = process_published_posts(posts=self.object.posts.all())
         return super().get_context_data(
             **kwargs,
-            page_obj=paginate_posts(posts, self.request)
+            page_obj=paginate_posts(process_posts(
+                posts=self.object.posts.all(),
+                do_filtering=(self.request.user != self.object)
+            ), self.request)
         )
 
 
-class UserUpdateView(LoginRequiredMixin, UserMixin, UpdateView):
+class UserUpdateView(LoginRequiredMixin, UpdateView):
+    model = User
     form_class = UserForm
     template_name = 'blog/user_form.html'
 

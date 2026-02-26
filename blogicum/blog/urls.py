@@ -32,10 +32,10 @@ urlpatterns = [
     path('category/<slug:category_slug>/',
          views.CategoryPostsListView.as_view(),
          name='category_posts'),
-    path('profile/edit/',
-         views.UserUpdateView.as_view(),
-         name='edit_profile'),
     path('profile/<str:username>/',
          views.UserDetailView.as_view(),
          name='profile'),
+    path('profile/user/edit/',
+         views.UserUpdateView.as_view(),
+         name='edit_profile'),
 ]
